@@ -1,4 +1,4 @@
-name: ci-amapy
+name: ci-ama-test
 run-name: GROUP - ${{ github.workflow }}-${{ github.ref }}-${{ github.actor }}
 
 on:
@@ -70,4 +70,3 @@ jobs:
           echo "${{ steps.filter.outputs.contents_files }}" | tr ' ' '\n' | sed 's/^/  /'
           echo "Matched core files:"
           echo "${{ steps.filter.outputs.core_files }}" | tr ' ' '\n' | sed 's/^/  /'
-          # add more echoes if needed
