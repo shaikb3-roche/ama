@@ -43,7 +43,6 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          base: refs/remotes/origin/main  # compare to main consistently
           list-files: shell               # expose *_files outputs for debugging
           filters: |
             utils:
