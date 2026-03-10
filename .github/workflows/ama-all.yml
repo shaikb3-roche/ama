@@ -69,3 +69,530 @@ jobs:
           echo "${{ steps.filter.outputs.contents_files }}" | tr ' ' '\n' | sed 's/^/  /'
           echo "Matched core files:"
           echo "${{ steps.filter.outputs.core_files }}" | tr ' ' '\n' | sed 's/^/  /'
+name: ci-amapy
+run-name: GROUP - ${{ github.workflow }}-${{ github.ref }}-${{ github.actor }}
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'utils-v*.*.*'
+      - 'pluggy-v*.*.*'
+      - 'db-v*.*.*'
+      - 'contents-v*.*.*'
+      - 'core-v*.*.*'
+      - 'plugin-gcr-v*.*.*'
+      - 'plugin-gcs-v*.*.*'
+      - 'plugin-posix-v*.*.*'
+      - 'plugin-s3-v*.*.*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.actor }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which packages changed
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      utils: ${{ steps.filter.outputs.utils }}
+      pluggy: ${{ steps.filter.outputs.pluggy }}
+      db: ${{ steps.filter.outputs.db }}
+      contents: ${{ steps.filter.outputs.contents }}
+      core: ${{ steps.filter.outputs.core }}
+      plugin-gcr: ${{ steps.filter.outputs.plugin-gcr }}
+      plugin-gcs: ${{ steps.filter.outputs.plugin-gcs }}
+      plugin-posix: ${{ steps.filter.outputs.plugin-posix }}
+      plugin-s3: ${{ steps.filter.outputs.plugin-s3 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # important: full history so diffs work
+
+      - name: Paths filter
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          list-files: shell               # expose *_files outputs for debugging
+          filters: |
+            utils:
+              - 'client/amapy-utils/**'
+            pluggy:
+              - 'client/amapy-pluggy/**'
+            db:
+              - 'client/amapy-db/**'
+            contents:
+              - 'client/amapy-contents/**'
+            core:
+              - 'client/amapy-core/**'
+            plugin-gcr:
+              - 'client/amapy-plugin-gcr/**'
+            plugin-gcs:
+              - 'client/amapy-plugin-gcs/**'
+            plugin-posix:
+              - 'client/amapy-plugin-posix/**'
+            plugin-s3:
+              - 'client/amapy-plugin-s3/**'
+
+      - name: Debug changed flags and files
+        run: |
+          echo "utils=${{ steps.filter.outputs.utils }}"
+          echo "pluggy=${{ steps.filter.outputs.pluggy }}"
+          echo "db=${{ steps.filter.outputs.db }}"
+          echo "contents=${{ steps.filter.outputs.contents }}"
+          echo "core=${{ steps.filter.outputs.core }}"
+          echo "plugin-gcr=${{ steps.filter.outputs['plugin-gcr'] }}"
+          echo "plugin-gcs=${{ steps.filter.outputs['plugin-gcs'] }}"
+          echo "plugin-posix=${{ steps.filter.outputs['plugin-posix'] }}"
+          echo "plugin-s3=${{ steps.filter.outputs['plugin-s3'] }}"
+          echo ""
+          echo "Changed files vs main:"
+          git diff --name-only refs/remotes/origin/main...HEAD | sed 's/^/  /'
+          echo ""
+          for k in contents core utils pluggy db 'plugin-gcr' 'plugin-gcs' 'plugin-posix' 'plugin-s3'; do
+            vname="${k}_files"
+            echo "Matched by $k:"
+            echo "${{ steps.filter.outputs['dummy'] }}" >/dev/null 2>&1 || true
+          done
+          echo "  contents: ${{ steps.filter.outputs.contents_files }}"
+          echo "  core:     ${{ steps.filter.outputs.core_files }}"
+          echo "  utils:    ${{ steps.filter.outputs.utils_files }}"
+          echo "  pluggy:   ${{ steps.filter.outputs.pluggy_files }}"
+          echo "  db:       ${{ steps.filter.outputs.db_files }}"
+          echo "  plugin-gcr: ${{ steps.filter.outputs['plugin-gcr_files'] }}"
+          echo "  plugin-gcs: ${{ steps.filter.outputs['plugin-gcs_files'] }}"
+          echo "  plugin-posix: ${{ steps.filter.outputs['plugin-posix_files'] }}"
+          echo "  plugin-s3: ${{ steps.filter.outputs['plugin-s3_files'] }}"
+
+  ci-amapy-utils:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs.utils == 'true' || startsWith(github.ref, 'refs/tags/utils-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-utils
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-utils
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-utils
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-utils
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-utils
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/utils')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-utils-dist
+          path: client/amapy-utils/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/utils')
+        working-directory: client/amapy-utils
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-pluggy:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs.pluggy == 'true' || startsWith(github.ref, 'refs/tags/pluggy-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-pluggy
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-pluggy
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-pluggy
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-pluggy
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-pluggy
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/pluggy')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-pluggy-dist
+          path: client/amapy-pluggy/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/pluggy')
+        working-directory: client/amapy-pluggy
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-db:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs.db == 'true' || startsWith(github.ref, 'refs/tags/db-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-db
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-db
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-db
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-db
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-db
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/db')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-db-dist
+          path: client/amapy-db/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/db')
+        working-directory: client/amapy-db
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-contents:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs.contents == 'true' || startsWith(github.ref, 'refs/tags/contents-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-contents
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-contents
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-contents
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-contents
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-contents
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/contents')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-contents-dist
+          path: client/amapy-contents/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/contents')
+        working-directory: client/amapy-contents
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-core:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs.core == 'true' || startsWith(github.ref, 'refs/tags/core-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-core
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-core
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-core
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-core
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-core
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/core')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-core-dist
+          path: client/amapy-core/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/core')
+        working-directory: client/amapy-core
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-plugin-gcr:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs['plugin-gcr'] == 'true' || startsWith(github.ref, 'refs/tags/plugin-gcr-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-plugin-gcr
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-plugin-gcr
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-plugin-gcr
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-plugin-gcr
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-plugin-gcr
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/plugin-gcr')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-plugin-gcr-dist
+          path: client/amapy-plugin-gcr/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/plugin-gcr')
+        working-directory: client/amapy-plugin-gcr
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-plugin-gcs:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs['plugin-gcs'] == 'true' || startsWith(github.ref, 'refs/tags/plugin-gcs-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-plugin-gcs
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-plugin-gcs
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-plugin-gcs
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-plugin-gcs
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-plugin-gcs
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/plugin-gcs')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-plugin-gcs-dist
+          path: client/amapy-plugin-gcs/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/plugin-gcs')
+        working-directory: client/amapy-plugin-gcs
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-plugin-posix:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs['plugin-posix'] == 'true' || startsWith(github.ref, 'refs/tags/plugin-posix-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-plugin-posix
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-plugin-posix
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-plugin-posix
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-plugin-posix
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-plugin-posix
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/plugin-posix')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-plugin-posix-dist
+          path: client/amapy-plugin-posix/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/plugin-posix')
+        working-directory: client/amapy-plugin-posix
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  ci-amapy-plugin-s3:
+    needs: detect-changes
+    if: needs['detect-changes'].outputs['plugin-s3'] == 'true' || startsWith(github.ref, 'refs/tags/plugin-s3-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup CI environment
+        working-directory: client
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: client/amapy-plugin-s3
+        run: python -m pip install -e .
+      - name: Run flake8
+        continue-on-error: true
+        working-directory: client/amapy-plugin-s3
+        run: flake8 .
+      - name: Run tests
+        continue-on-error: true
+        working-directory: client/amapy-plugin-s3
+        run: pytest --cov=./ --cov-report=xml
+      - name: Build package
+        working-directory: client/amapy-plugin-s3
+        run: python -m build
+      - name: Check package
+        working-directory: client/amapy-plugin-s3
+        run: twine check dist/*
+      - name: Store built package
+        if: startsWith(github.ref, 'refs/tags/plugin-s3')
+        uses: actions/upload-artifact@v4
+        with:
+          name: amapy-plugin-s3-dist
+          path: client/amapy-plugin-s3/dist/
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/plugin-s3')
+        working-directory: client/amapy-plugin-s3
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
